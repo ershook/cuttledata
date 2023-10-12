@@ -1,7 +1,7 @@
 Welcome to CuttleData documentation!
 ===================================
 
-**CuttleData** (/lu'make/) is a Python library for interacting with cuttlecrew's behavioral data.
+**CuttleData** is a Python library for interacting with cuttlecrew's behavioral data.
 
 Check out the :doc:`usage` section for further information, including
 how to :ref:`installation` the project.
