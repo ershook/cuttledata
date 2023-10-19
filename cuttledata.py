@@ -29,12 +29,24 @@ class CuttleData:
         Args:
             images_folder (str): Folder containing the behavior images..
         """
+        # Determine what os system code is running on: 
+        
+        if os.path.exists('/mnt/smb/locker/axel-locker/'):
+            prefix = '/mnt/smb/locker/axel-locker/'
+        elif os.path.exists('/Volumes/axel-locker/'):
+            prefix = '/Volumes/axel-locker/'
+        elif os.path.exists('Z:/cuttlefish'):
+            prefix = 'Z:/'
+        else:
+            raise Exception("Can't find path to data -- are you sure axel-locker is mounted?")
+        
+        
         self.images_folder = images_folder
-        self.images_path = '/mnt/smb/locker/axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
-        self.path_to_masks = '/mnt/smb/locker/axel-locker/es3773/data/sam_data/' + images_folder + '/'
-        knob_inds = np.load('/mnt/smb/locker/axel-locker/es3773/data/knob_inds.npy')
+        self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
+        self.path_to_masks = prefix + 'es3773/data/sam_data/' + images_folder + '/'
+        knob_inds = np.load(prefix + 'es3773/data/knob_inds.npy')
         self.knob_inds = (knob_inds[0], knob_inds[1])
-        self.storage_path = '/mnt/smb/locker/axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
+        self.storage_path = prefix + 'axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
         
     
     
@@ -829,3 +841,7 @@ class CuttleData:
     def mean_image(self, image_no):
         v = self.load_image(image_no)
         return np.mean(v)
+              
+        
+        
+    
