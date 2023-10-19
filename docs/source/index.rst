@@ -3,7 +3,7 @@ Welcome to CuttleData documentation!
 
 **CuttleData** is a Python library for interacting with cuttlecrew's behavioral data.
 
-Start with the `Tutorial </../tutorials/tutorial.nblink>`_
+Start with the `Tutorial </../tutorial.nblink>`_
 
 
 the :doc:`usage` section for further information, including
