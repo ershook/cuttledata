@@ -1,36 +1,53 @@
-"""
-cuttledata - Python library for cuttlecrew to interact with behavioral data.
-"""
-
-__version__ = "0.1.0"
-
-
-import cv2
+import os
 import json
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.ndimage
 import skimage.transform
 from pycocotools import mask as mask_utils
+from matplotlib.patches import Rectangle
+from scipy.stats import gaussian_kde
+
+
+import largestinteriorrectangle as lir
+from PortillaSimoncelliMinimalStats import *
+import plenoptic as po
+
+import cv2
+
+import warnings
+warnings.filterwarnings('ignore')
+
+
 
 
 class CuttleData:
-    def __init__(self,
-                 path_to_masks='/mnt/smb/locker/axel-locker/es3773/data/sam_data_highlight_reel/',
-                 images_path='/mnt/smb/locker/axel-locker/es3773/data/highlight_reel_data/'):
+    def __init__(self, images_folder):
         """
         Initializes the CuttleData object.
 
         Args:
-            path_to_masks (str): Path to the masks directory.
-            images_path (str): Path to the images directory.
+            images_folder (str): Folder containing the behavior images..
         """
-
-        self.path_to_masks = path_to_masks
-        self.images_path = images_path
+        self.images_folder = images_folder
+        self.images_path = '/mnt/smb/locker/axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
+        self.path_to_masks = '/mnt/smb/locker/axel-locker/es3773/data/sam_data/' + images_folder + '/'
         knob_inds = np.load('/mnt/smb/locker/axel-locker/es3773/data/knob_inds.npy')
         self.knob_inds = (knob_inds[0], knob_inds[1])
+        self.storage_path = '/mnt/smb/locker/axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
         
+    
+    
+    def num_frames(self):
+        
+        if not hasattr(self, "n_frames"): # This can be a slow operation so only ever do it once.
+            self.n_frames = len(os.listdir(self.images_path))
+        return self.n_frames
+    
+    def num_masks(self): 
+        if not hasattr(self, "n_masks"): # This can be a slow operation so only ever do it once.
+            self.n_masks = len(os.listdir(self.path_to_masks))
+        return self.n_masks
         
     def _get_mask_inds(self, image):
         """
@@ -67,8 +84,8 @@ class CuttleData:
         # Sort size from biggest to smallest 
         good_inds = np.array(good_inds)[np.argsort(good_areas)][::-1]
 
-        # Delete duplicates 
-        if np.abs(good_areas[0]-good_areas[1])<1000:
+        # Dleelete duplicates 
+        if len(good_areas)>1 and np.abs(good_areas[0]-good_areas[1])<1000:
             good_areas = np.delete(good_areas,1)
             good_inds = np.delete(good_inds,1)
 
@@ -76,9 +93,9 @@ class CuttleData:
         
         
         if  good_areas[0]<100000: # Missing cuttlefish mask, fill index 0 with 'ERR'
-            good_inds.insert('ERR',0)
-        elif  good_areas[1]<60000: # Missing mantle mask, fill index 1 with 'ERR'
-            good_inds.insert(1,'ERR')
+            good_inds.insert(0, 'ERR')
+        elif len(good_areas)>1 and good_areas[1]<60000: # Missing mantle mask, fill index 1 with 'ERR'
+            good_inds.insert(1, 'ERR')
         
     
         ### On rare occasions an inverse mask doesn't exist in that case we resort to looking at the size of the masks
@@ -167,6 +184,9 @@ class CuttleData:
             good_inds = final_inds
         return good_inds
 
+    def decode_mask(self, mask):
+        return mask_utils.decode(mask)
+        
 
 
     def is_image_out_of_focus(self, image_no, threshold=100):
@@ -200,6 +220,9 @@ class CuttleData:
         """
         if image_no ==0:
             raise Exception("Remember tiff files start at 1 not 0 :/")
+        
+        if not os.path.exists(self.path_to_masks):
+            raise Exception("Mask files don't exist")
     
         mask_path = f"{self.path_to_masks}{str(image_no).zfill(5)}.json"
         with open(mask_path) as f:
@@ -224,8 +247,12 @@ class CuttleData:
             image = cv2.imread(image_file)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             return image
+        
+        
+    def load_highres_image(self, image_no):
+        pass
 
-    def plot_image(self, image, title=False, grayscale=True):
+    def _plot_image(self, image, title=False, grayscale=True):
         """
         Plots the image.
 
@@ -242,7 +269,7 @@ class CuttleData:
         plt.axis('off')
         plt.show()
         
-    def load_and_plot_image(self, image_no, title=False,  grey = False):
+    def plot_image(self, image_no, title=False,  grey = False):
         """
         Wrapper that calls load_image and plot_image methods 
         Args:
@@ -253,7 +280,7 @@ class CuttleData:
         
         """
         image = self.load_image(image_no)
-        self.plot_image(image,title, grey)
+        self._plot_image(image,title, grey)
         return image
 
     def _get_ellipse_angle(self, thresh_image):
@@ -271,7 +298,7 @@ class CuttleData:
         (_, _), (_, _), angle = cv2.fitEllipse(contour)
         return angle
 
-    def get_rotated_cuttlefish(self, image_no, title = False,show_image=True, correct_flip = True):
+    def get_cuttlefish(self, image_no, title = False, show_image=True, correct_flip = True):
         """
         Retrieves the rotated cuttlefish image and its angle.
 
@@ -312,11 +339,10 @@ class CuttleData:
             if title:
                 plt.title(title)
                 plt.savefig('/mnt/smb/locker/axel-locker/es3773/data/'+str(title)+'.png')
-            #plt.show()
-
+          
         return rotated_cuttlefish
     
-    def get_mantle(self, image_no, show_image = False):
+    def get_mantle(self, image_no, show_image = True, title = False):
         """
         Retrieves the rotated mantle image.
 
@@ -347,10 +373,22 @@ class CuttleData:
             if show_image:
                 plt.axis('off')
                 plt.imshow(rotated_mantle)
-                plt.show()
+                
+                if title:
+                    plt.title(title)
+                    plt.savefig('/mnt/smb/locker/axel-locker/es3773/data/'+str(title)+'.png')
             return rotated_mantle
     
         return 'ERR'
+    
+    
+    def get_highres_mantle(self, image_no):
+        pass
+    
+
+    
+    def get_highres_cuttlefish(self, image_no):
+        pass
 
 
     def _get_object(self, image, mask):
@@ -395,7 +433,7 @@ class CuttleData:
         else:
             return 'ERR'
 
-    def get_mantle_mask(self, image_no):
+    def get_mantle_mask(self, image_no, show_image = False):
         """
         Retrieves the mantle mask for a given image.
 
@@ -411,9 +449,14 @@ class CuttleData:
             raise Exception("Don't have a mantle mask")
             
         full_mantle_mask = mask_utils.decode(masks[mantle_ind]["segmentation"])
+        
+        if show_image:
+            plt.imshow(full_mantle_mask)
+            plt.show()
+       
         return full_mantle_mask
 
-    def get_cuttlefish_mask(self, image_no):
+    def get_cuttlefish_mask(self, image_no, show_image = False):
         """
         Retrieves the cuttlefish mask for a given image.
 
@@ -430,6 +473,11 @@ class CuttleData:
             raise Exception("Don't have a cuttlefish mask")
             
         full_cuttlefish_mask = mask_utils.decode(masks[cf_ind]["segmentation"])
+        
+        if show_image:
+            plt.imshow(full_cuttlefish_mask)
+            plt.show()
+        
         return full_cuttlefish_mask
 
     def _is_cuttlefish_upside_down(self, image_no, masks, angle, full_cuttlefish_mask, non_cf_inds):
@@ -505,7 +553,7 @@ class CuttleData:
     
     
     
-    def get_cuttlefish_pattern(self, image_no):
+    def get_cuttlefish_pattern(self, image_no, show_image = False):
         """
         Return a rectangle inscribed in the cuttlefish body.
         
@@ -518,9 +566,16 @@ class CuttleData:
         """
         
         max_rect = self._get_inscribed_rectangle(image_no)
-        return self.get_rotated_cuttlefish(image_no,  False, False)[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]]
+        pattern = self.get_cuttlefish(image_no,  False, False)[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]]
+        
+        if show_image:
+            plt.imshow(pattern)
+            plt.show()
+        
+        return pattern
+    
 
-    def get_mantle_pattern(self, image_no):
+    def get_mantle_pattern(self, image_no, show_image = False):
         """
         Return a rectangle inscribed in the mantle.
         
@@ -532,7 +587,12 @@ class CuttleData:
             np.ndarray: inscribed rectangle image
         """
         max_rect = self._get_inscribed_rectangle(image_no, False)
-        return self.get_mantle(image_no)[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]]
+        pattern = self.get_mantle(image_no, False)[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]]
+        if show_image:
+            plt.imshow(pattern)
+            plt.show()
+     
+        return pattern
         
         
     def plot_inscribed_rectangle(self, image_no, cf = True):
@@ -548,7 +608,7 @@ class CuttleData:
             np.ndarray: inscribed rectangle image
         """
         if cf: 
-            rotated= self.get_rotated_cuttlefish(image_no)
+            rotated= self.get_cuttlefish(image_no)
             max_rect = self._get_inscribed_rectangle(image_no)
         else: 
             rotated = self.get_mantle(image_no)
@@ -595,7 +655,7 @@ class CuttleData:
         
         return new_image, mask
     
-    def compute_mean_rgb(self, image_no):
+    def mean_rgb(self, image_no, cf = True):
         """
         Compute the mean RGB pixel value of cuttlefish body or mantle
         
@@ -607,20 +667,47 @@ class CuttleData:
         Returns:
             np.ndarray: inscribed rectangle image
         """
-        cf, mask = self.get_cuttlefish_and_mask(ii)
-        return np.mean(cf[np.where(mask != 0)])
+       
+        image, mask = self.get_cuttlefish_and_mask(image_no, cf)
+        return np.mean(image[np.where(mask != 0)])
+
+            
 
 
-    def distance(self, image_no):
+    def distance(self, start_frame, end_frame = False, cf = True):
         """
-        Calculates the distance for a given image.
+        Calculates the distance between the center of the cuttlefish between 
+        the start frame and end frame. 
 
         Args:
             image_no (int): Image number.
         """
-        # TODO: Implement distance calculation
-        pass
+        if not end_frame:
+            end_frame = start_frame + 1
+            
+        # Getting bounding box center is equivalent to fitting an ellipse and taking its center
+        
+        
+        x_start, y_start = self.get_bounding_box_center(start_frame, cf)
+        x_end, y_end = self.get_bounding_box_center(end_frame, cf)
+       
+        # Calculate the Euclidean distance
+        return math.sqrt((x_start - x_end)**2 + (y_start - y_end)**2)
 
+    def get_bounding_box_center(self, image_no, cf= True):
+    
+        
+        if cf:
+            mask_ind = self.get_cf_ind(image_no)
+        else:
+            mask_ind = self.get_mantle_ind(image_no)
+        
+        masks = self.load_masks(image_no)
+        mask = masks[mask_ind]
+        bbox = mask['bbox']
+        y_center, x_center = bbox[1] + bbox[3]/2, bbox[0] + bbox[2]/2
+        return x_center, y_center
+    
     def background_pattern(self, image_no):
         """
         Determines the background pattern for a given image.
@@ -631,6 +718,114 @@ class CuttleData:
         # TODO: Determine background pattern
         pass
     
-    def compute_texture_statistics(self, image_no):
-        pass
+    def rgb2gray(self, rgb):
+        
+
+        r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
+        gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+
+        return gray
+
+
+    def compute_texture_statistics(self, image_no, cf = False, spatial_corr_width = 7):
+        """
+        Gets Portilla and Simoncelli textures statistics via Plenoptic.
+        Computes statistics on the output of either get_cuttlefish_pattern or 
+        get_mantle_pattern. 
+
+        Args:
+            image_no (int): Image number.
+            cf (bool): True for cuttlefish pattern, false for mantle pattern.
+            spatial_corr_width: Width of the spatial window of texture statistics. 
+                                Default in Portilla and Simoncelli model is 7.
+        
+        Returns:
+            stats (np.array): Array of texture statistics
+            
+        """
+        img_size = 224
+        if cf: 
+            img = self.get_cuttlefish_pattern(image_no) # Get the cuttlefish pattern
+        else:
+            img = self.get_mantle_pattern(image_no) # Get the mantle pattern
+            
+        gray_img = self.rgb2gray(img) # Convert image to gray scale
+        resized_img = gray_img[:img_size,:img_size] # Texture model is finicky in terms of size
+        img = torch.from_numpy(np.array([[resized_img]])).float() # Prepare image for torch
+        
+        
+        # Initialize the minimal model. Use same params as paper
+        model_min = PortillaSimoncelliMinimalStats([img_size,img_size], n_scales=4,
+                                                  n_orientations=4,
+                                                  spatial_corr_width=spatial_corr_width,
+                                                  use_true_correlations=False)
+
+        # Extract the dictionary indicating which statistics are the minimal set
+        mask_min_dict = model_min.statistics_mask
+        
+        mask_min_vec = model_min.convert_to_vector(mask_min_dict)
+        stats = model_min(img)
+        po_stats = stats[mask_min_vec]
+        
+        dict_of_stat_labels = {}
+        for key in mask_min_dict:
+
+            dict_of_stat_labels[key] = np.where(mask_min_dict[key], key, 'False')
+            
+        # Below is the equivalent of using .convert_to_vector but for array of strings 
+        # stat_label_vec = model_min.convert_to_vector(dict_of_stat_labels)
+        all_label_vec = []
+        for (_, val) in dict_of_stat_labels.items():
+            all_label_vec += list(np.ndarray.flatten(np.squeeze(val)))
+            
+        label_vec= list(np.array(all_label_vec)[mask_min_vec.squeeze()])
+        
+        return np.array(po_stats), label_vec
+
     
+    def plot_density_scatter(self, points):
+        
+        x = np.array(points)[:,0]
+        y = np.array(points)[:,1]
+        
+        # Calculate the point density
+        xy = np.vstack([x,y])
+        z = gaussian_kde(xy)(xy)
+
+        fig, ax = plt.subplots()
+        ax.scatter(x, 1582 - y, c=z, s=100)
+        plt.xlim(0, 2380)
+        plt.ylim(0, 1582)
+        plt.show()
+        
+        
+                
+    def get_values_across_session(self, func):
+        
+        path = self.storage_path + self.images_folder.replace('/','') + '_' + func.__name__ + '.npy'
+        if os.path.exists(path):
+            return np.load(path  )    
+                           
+                           
+        print('values have not been computed before -- may take a bit of time.')
+        values = []
+    
+        for ii in range(1,self.num_frames()): 
+            
+            if ii%100 == 0:
+                print('frame: ', str(ii), '/', str(self.num_frames()))
+            try:
+                values.append(func(ii))
+                
+            except:
+                values.append(values[-1]) 
+                # If don't have mask just copy the last center point and note that its missing
+                
+        np.save(path, values)
+        return values
+        
+
+    
+    def mean_image(self, image_no):
+        v = self.load_image(image_no)
+        return np.mean(v)
