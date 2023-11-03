@@ -12,12 +12,18 @@ from scipy.stats import gaussian_kde
 import largestinteriorrectangle as lir
 from PortillaSimoncelliMinimalStats import *
 import plenoptic as po
+import random 
 
 import cv2
 
 import warnings
 warnings.filterwarnings('ignore')
 
+
+class Interval:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
 
 
 
@@ -30,7 +36,6 @@ class CuttleData:
             images_folder (str): Folder containing the behavior images..
         """
         # Determine what os system code is running on: 
-        
         if os.path.exists('/mnt/smb/locker/axel-locker/'):
             prefix = '/mnt/smb/locker/axel-locker/'
         elif os.path.exists('/Volumes/axel-locker/'):
@@ -43,20 +48,31 @@ class CuttleData:
         
         self.images_folder = images_folder
         self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
-        self.path_to_masks = prefix + 'es3773/data/sam_data/' + images_folder + '/'
-        knob_inds = np.load(prefix + 'es3773/data/knob_inds.npy')
+        self.path_to_masks = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/sam_data/' + images_folder + '/'
+        knob_inds = np.load(prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/knob_inds.npy')
         self.knob_inds = (knob_inds[0], knob_inds[1])
-        self.storage_path = prefix + 'axel-locker/cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
+        self.storage_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
         
     
     
     def num_frames(self):
-        
+        """
+        Get the number of frames in the dataset.
+
+        Returns:
+            int: The total number of frames in the dataset.
+        """
         if not hasattr(self, "n_frames"): # This can be a slow operation so only ever do it once.
             self.n_frames = len(os.listdir(self.images_path))
         return self.n_frames
     
     def num_masks(self): 
+        """
+        Get the number of masks in the dataset.
+
+        Returns:
+            int: The total number of masks in the dataset.
+        """
         if not hasattr(self, "n_masks"): # This can be a slow operation so only ever do it once.
             self.n_masks = len(os.listdir(self.path_to_masks))
         return self.n_masks
@@ -70,103 +86,125 @@ class CuttleData:
         Args:
             image_no (int): Image number.
         """
+        # Load masks for the specified image
         masks = self.load_masks(image)
-        
+
+        # Get the areas of all masks in the image
         areas = [masks[ii]['area'] for ii in range(len(masks))]
-        
-        # Determine the index of the inverse mask ie. the mask with the cuttlefish 0 and bg 1 
+
+        # Determine the index of the inverse mask, i.e., the mask with the cuttlefish 0 and background 1
         ind = np.argmax(areas)
         max_ind = ind
-        if np.sum(np.array(areas)>1e6)>1:
-            areas[ind]=0 # Want the second biggest mask
-            ind=np.argmax(areas) # This is the inverse mask
 
+        # If there are more than two masks with an area greater than 1e6, set the area of the first mask to 0
+        if np.sum(np.array(areas) > 1e6) > 1:
+            areas[ind] = 0
+            ind = np.argmax(areas)
+
+        # Initialize lists to store good mask indices and their corresponding areas
         good_inds = []
         good_areas = []
+
+        # Iterate through all masks and filter them based on various criteria
         for mask_ii in range(len(masks)):
-            
-            overlap_w_inv = np.sum(mask_utils.decode(masks[mask_ii]["segmentation"])[180:1450,300:2000]*(1-mask_utils.decode(masks[ind]["segmentation"])[180:1450,300:2000]))
-            
-            # Determine which masks are within the inverse mask 
-            # Knob inds are indices of the inflow valve -- if don't ignore these sometimes will get the knob as a mask
-            if areas[mask_ii] < 200000 and areas[mask_ii]>10000 and mask_ii != max_ind and overlap_w_inv >  200 and np.sum(mask_utils.decode(masks[mask_ii]["segmentation"])[self.knob_inds]) < 500:     
+
+            # Calculate the overlap with the inverse mask in a specific region
+            overlap_w_inv = np.sum(mask_utils.decode(masks[mask_ii]["segmentation"])[180:1450,300:2000] * (1 - mask_utils.decode(masks[ind]["segmentation"])[180:1450,300:2000]))
+
+            # Check if the mask meets various conditions, including size, non-maximum overlap, and knob location
+            if areas[mask_ii] < 200000 and areas[mask_ii] > 10000 and mask_ii != max_ind and overlap_w_inv > 200 and np.sum(mask_utils.decode(masks[mask_ii]["segmentation"])[self.knob_inds]) < 500:
                 good_inds.append(mask_ii)
                 good_areas.append(areas[mask_ii])
-                
-        # Sort size from biggest to smallest 
-        good_inds = np.array(good_inds)[np.argsort(good_areas)][::-1]
 
-        # Dleelete duplicates 
-        if len(good_areas)>1 and np.abs(good_areas[0]-good_areas[1])<1000:
-            good_areas = np.delete(good_areas,1)
-            good_inds = np.delete(good_inds,1)
+        # Sort the good mask indices by area from largest to smallest
+        good_inds = np.array(good_inds)[np.argsort(good_areas)][::-1]
+        print(good_inds)
+        # Check for duplicate areas and remove duplicates
+        if len(good_areas) > 1 and np.abs(good_areas[0] - good_areas[1]) < 1000:
+            good_areas = np.delete(good_areas, 1)
+            good_inds = np.delete(good_inds, 1)
 
         good_inds = list(good_inds)
         
-        
-        if  good_areas[0]<100000: # Missing cuttlefish mask, fill index 0 with 'ERR'
+        # Check the areas and insert 'ERR' at specific indices if needed
+        if good_areas[0] < 100000:
             good_inds.insert(0, 'ERR')
-        elif len(good_areas)>1 and good_areas[1]<60000: # Missing mantle mask, fill index 1 with 'ERR'
+        elif len(good_areas) > 1 and good_areas[1] < 60000:
             good_inds.insert(1, 'ERR')
-        
-    
-        ### On rare occasions an inverse mask doesn't exist in that case we resort to looking at the size of the masks
+
+        # Check if no good indices were found, and resort to an alternative approach
         if len(good_areas) == 0:
 
+            # Initialize a list to store good mask indices
             good_inds = []
+
+            # Initialize variables for maximum area and mask index with the maximum area
             max_area = 0
+            max_area_index = 0
+
+            # Iterate through all masks and check for conditions based on area, location, and aspect ratio
             for ii in range(len(masks)):
                 area = masks[ii]['area']
-                if area >80000:
+                if area > 80000:
                     seg = mask_utils.decode(masks[ii]["segmentation"])
-                    x_mar = np.mean(seg, axis = 0)
-                    y_mar = np.mean(seg, axis = 1)
-                    if max(x_mar)<.5 and max(y_mar)<.5 and area<2e6:
-                        if masks[ii]['area']> max_area: 
+                    x_mar = np.mean(seg, axis=0)
+                    y_mar = np.mean(seg, axis=1)
+
+                    # Check if the mask meets specific conditions
+                    if max(x_mar) < 0.5 and max(y_mar) < 0.5 and area < 2e6:
+                        # Update the mask index if it has a larger area
+                        if masks[ii]['area'] > max_area:
                             good_inds.insert(0, ii)
                             max_area = masks[ii]['area']
                         else:
                             good_inds.append(ii)
 
             try:
+                # Try to decode the cuttlefish mask from the selected index
                 full_cuttlefish_mask = mask_utils.decode(masks[good_inds[0]]["segmentation"])
             except:
-                full_cuttlefish_mask=[]
+                full_cuttlefish_mask = []
+
+            # Check if the cuttlefish mask is empty
             if len(full_cuttlefish_mask) == 0:
                 good_mask_inds.append(['ERR','ERR'])
             else:
                 temp_areas = []
                 temp_indices = []
                 good_masks = []
+
+                # Iterate through masks and filter them based on various criteria
                 for ii in range(len(masks)):
-
-                    mask_1 =mask_utils.decode(masks[ii]["segmentation"])
-
+                    mask_1 = mask_utils.decode(masks[ii]["segmentation"])
                     area = masks[ii]['area']
 
-                    if   area> 60000 and area<1e6 and np.sum(np.multiply(mask_1,full_cuttlefish_mask)) >300  and np.sum(np.multiply(mask_1,full_cuttlefish_mask)) - int(min(np.sum(mask_1),np.sum(full_cuttlefish_mask))) <300:
-
+                    # Check conditions related to size and overlap with the cuttlefish mask
+                    if area > 60000 and area < 1e6 and np.sum(np.multiply(mask_1, full_cuttlefish_mask)) > 300 and np.sum(np.multiply(mask_1, full_cuttlefish_mask)) - int(min(np.sum(mask_1), np.sum(full_cuttlefish_mask))) < 300:
                         temp_areas.append(area)
                         temp_indices.append(ii)
                         good_masks.append(mask_1)
 
+                # Order the masks by area in ascending order
                 order = np.argsort(temp_areas)
 
-                good_inds = list(np.unique(list([good_inds[0]]+ list(np.array((temp_indices))[order]))))
+                # Construct a list of good mask indices with certain conditions
+                good_inds = list(np.unique(list([good_inds[0]] + list(np.array((temp_indices))[order]))))
 
-
+                # Check the number of good indices
                 if len(good_inds) > 2:
-
-                    ### Check for repeats
                     final_inds = []
+
+                    # Check for repeated masks
                     for ii in range(len(good_inds)):
                         mask_1 = mask_utils.decode(masks[good_inds[ii]]["segmentation"])
-                        for jj in range(ii+1, len(good_inds)):
-                           
-
+                        for jj in range(ii + 1, len(good_inds)):
                             mask_2 = mask_utils.decode(masks[good_inds[jj]]["segmentation"])
-                            if int(np.sum(np.multiply(mask_1, mask_2)-mask_1))/3.>50000:
+
+                            # Check if there is significant overlap between two masks
+                            if int(np.sum(np.multiply(mask_1, mask_2) - mask_1)) / 3. > 50000:
                                 final_inds += [good_inds[ii], good_inds[jj]]
+
+                    # If no repeated masks are found, set the final indices to an empty list
                     if final_inds == []:
                         good_mask_inds.append([])
                     else:
@@ -174,16 +212,17 @@ class CuttleData:
 
                 elif len(good_inds) == 1:
                     good_mask_inds.append([good_inds[0]])
-                elif len(good_inds) == 0: 
+                elif len(good_inds) == 0:
                     good_mask_inds.append([])
-
                 else:
                     good_mask_inds.append(good_inds)
 
+            # Sort and filter the final mask indices based on area and other conditions
             temp_inds = good_mask_inds[-1]
-            
             temp_areas = []
-            if len(temp_inds)>1:
+
+            # Sort the mask indices by area in descending order
+            if len(temp_inds) > 1:
                 for ii_ in temp_inds:
                     temp_areas.append(masks[ii_]['area'])
 
@@ -192,11 +231,21 @@ class CuttleData:
             else:
                 final_inds = temp_inds
 
-
             good_inds = final_inds
+
+        # Return the list of good mask indices
         return good_inds
 
     def decode_mask(self, mask):
+        """
+        Decode a mask using mask utilities.
+
+        Args:
+            mask (dict): A mask represented as a dictionary.
+
+        Returns:
+            numpy.ndarray: The decoded mask as a NumPy array.
+        """
         return mask_utils.decode(mask)
         
 
@@ -235,10 +284,16 @@ class CuttleData:
         
         if not os.path.exists(self.path_to_masks):
             raise Exception("Mask files don't exist")
-    
-        mask_path = f"{self.path_to_masks}{str(image_no).zfill(5)}.json"
-        with open(mask_path) as f:
-            all_masks = json.load(f)
+        try: 
+            
+            mask_path = f"{self.path_to_masks}{str(image_no).zfill(5)}.json"
+            with open(mask_path) as f:
+                all_masks = json.load(f)
+        except:
+            mask_path = f"{self.path_to_masks}{str(image_no).zfill(6)}.json"
+            with open(mask_path) as f:
+                all_masks = json.load(f)
+      
         return all_masks
 
 
@@ -321,39 +376,53 @@ class CuttleData:
         Returns:
             tuple: Tuple containing the rotated cuttlefish image and its angle.
         """
+        # Get the full cuttlefish mask for the specified image
         full_cuttlefish_mask = self.get_cuttlefish_mask(image_no)
+
+        # Load masks and the image for the specified image
         masks = self.load_masks(image_no)
         image = self.load_image(image_no)
+
+        # Get the cuttlefish mask index for the image
         cf_mask_ind = self.get_cf_ind(image_no)
+
+        # Find indices where the cuttlefish mask is equal to 0 (non-cuttlefish region)
         non_cf_inds = np.where(full_cuttlefish_mask == 0)
 
+        # Iterate through all color channels and set pixel values to 255 (white) in non-cuttlefish regions
         for ii in range(3):
             image[:, :, ii][non_cf_inds] = 255
 
+        # Get the cuttlefish image using the specified mask index
         cf_image = self._get_object(image, masks[cf_mask_ind])
+
+        # Get the cuttlefish mask object using the specified mask index
         cf_mask = self._get_object(full_cuttlefish_mask, masks[cf_mask_ind])
 
+        # Attempt to calculate the angle of rotation for the cuttlefish mask, or set it to 0 if there's an error
         try:
             angle = self._get_ellipse_angle(cf_mask)
         except:
             angle = 0
 
+        # Rotate the cuttlefish image by the calculated angle + 180 degrees and resize with padding as 255 (white)
         rotated_cuttlefish = skimage.transform.rotate(cf_image, angle + 180, resize=True, cval=255)
 
-        if correct_flip and self.get_mantle_ind(image_no) != 'ERR' and self._is_cuttlefish_upside_down(image_no, masks, angle,
-                                                                                      full_cuttlefish_mask,
-                                                                                      non_cf_inds):
+        # If 'correct_flip' is True and the mantle mask index is valid, check if the cuttlefish is upside down
+        if correct_flip and self.get_mantle_ind(image_no) != 'ERR' and self._is_cuttlefish_upside_down(image_no, masks, angle, full_cuttlefish_mask, non_cf_inds):
+            # If upside down, rotate the cuttlefish image by 180 degrees and resize with padding as 255 (white)
             rotated_cuttlefish = skimage.transform.rotate(rotated_cuttlefish, 180, resize=True, cval=255)
 
+        # If 'show_image' is True, display the rotated cuttlefish image without axis labels and with an optional title
         if show_image:
             plt.imshow(rotated_cuttlefish)
             plt.axis('off')
             if title:
                 plt.title(title)
-                plt.savefig('/mnt/smb/locker/axel-locker/es3773/data/'+str(title)+'.png')
-          
+
+        # Return the rotated cuttlefish image
         return rotated_cuttlefish
-    
+
     def get_mantle(self, image_no, show_image = True, title = False):
         """
         Retrieves the rotated mantle image.
@@ -366,34 +435,51 @@ class CuttleData:
             tuple: Tuple containing the rotated cuttlefish image and its angle.
         """
         
+        # Get the mantle mask index for the specified image
         mantle_mask_ind = self.get_mantle_ind(image_no)
+
+        # Check if the mantle mask index is valid (not 'ERR')
         if mantle_mask_ind != 'ERR':
-        
+            # Get the full mantle mask for the image
             full_mantle_mask = self.get_mantle_mask(image_no)
+
+            # Load masks and the image for the specified image
             masks = self.load_masks(image_no)
             image = self.load_image(image_no)
 
+            # Find indices where the mantle mask is equal to 0 (non-mantle region)
             non_mantle_inds = np.where(full_mantle_mask == 0)
+
+            # Iterate through all color channels and set pixel values to 255 (white) in non-mantle regions
             for ii in range(3):
                 image[:, :, ii][non_mantle_inds] = 255
+
+            # Get the mantle image using the specified mask index
             mantle_image = self._get_object(image, masks[mantle_mask_ind])
 
+            # Get the mantle mask object using the specified mask index
             mantle_mask = self._get_object(full_mantle_mask, masks[mantle_mask_ind])
+
+            # Calculate the angle of rotation for the mantle mask
             angle = self._get_ellipse_angle(mantle_mask)
 
+            # Rotate the mantle image by the calculated angle and resize with padding as 255 (white)
             rotated_mantle = skimage.transform.rotate(mantle_image, angle, resize=True, cval=255)
+
             if show_image:
+                # Display the rotated mantle image without axis labels and with an optional title
                 plt.axis('off')
                 plt.imshow(rotated_mantle)
-                
+
                 if title:
                     plt.title(title)
-                    plt.savefig('/mnt/smb/locker/axel-locker/es3773/data/'+str(title)+'.png')
+
+            # Return the rotated mantle image
             return rotated_mantle
-    
+
+        # Return 'ERR' if the mantle mask index is not valid
         return 'ERR'
-    
-    
+
     def get_highres_mantle(self, image_no):
         pass
     
@@ -506,25 +592,66 @@ class CuttleData:
         Returns:
             bool: True if the cuttlefish is upside down, False otherwise.
         """
+        # Load the image for the specified image number
         image = self.load_image(image_no)
+
+        # Get the full mantle mask for the image
         full_mantle_mask = self.get_mantle_mask(image_no)
+
+        # Find indices where the mantle mask is equal to 1 (mantle region)
         mantle_inds = np.where(full_mantle_mask == 1)
 
+        # Iterate through two sets of indices: non-cuttlefish region and mantle region
         for inds in [non_cf_inds, mantle_inds]:
             for ii in range(3):
+                # Set the pixel values to 255 (white) in the specified regions for all color channels
                 image[:, :, ii][inds] = 255
 
+        # Get the cuttlefish image based on the cuttlefish mask
         cf_image = self._get_object(image, masks[self.get_cf_ind(image_no)])
 
+        # Rotate the cuttlefish image by the angle + 180 degrees
         rotated_cuttlefish = scipy.ndimage.rotate(cf_image, angle + 180)
+
+        # Calculate the median y-coordinate of non-background pixels in the rotated cuttlefish image
         y_med = np.median(np.where(np.array(rotated_cuttlefish)[:, :, 0] != 255)[0])
+
+        # Get the dimensions of the rotated cuttlefish image
         y_size = np.shape(rotated_cuttlefish)[0]
         x_size = np.shape(rotated_cuttlefish)[1]
 
+        # Check if the median y-coordinate is greater than half of the image height
         if y_med > y_size / 2.:
+            # If true, return True
             return True
+        # If false, return False
         return False
     
+    
+    def angle(self, image_no, cf = True):
+        """
+        TODO:
+
+        Args:
+            image_no (int): Image number.
+            cf (bool): True for cuttlefish body, false for mantle
+
+        Returns:
+            TODO
+        """
+        
+        if cf: 
+            full_mask = self.get_cuttlefish_mask(image_no)
+            mask_ind = self.get_cf_ind(image_no)
+        else:
+            full_mask = self.get_mantle_mask(image_no)
+            mask_ind = self.get_mantle_ind(image_no)
+        
+        masks = self.load_masks(image_no)
+        mask = self._get_object(full_mask, masks[mask_ind])
+      
+        angle = self._get_ellipse_angle(mask)
+        return angle
     
     
     def _get_inscribed_rectangle(self, image_no, cf = True):
@@ -539,29 +666,64 @@ class CuttleData:
             list: max_rect the coordinates of the corner of the inscribed rectnagle
         """
         
-        if cf: 
+        # Determine whether to use cuttlefish or mantle data
+        if cf:
+            # If 'cf' is True, get the cuttlefish mask and mask index
             full_mask = self.get_cuttlefish_mask(image_no)
             mask_ind = self.get_cf_ind(image_no)
         else:
+            # If 'cf' is False, get the mantle mask and mask index
             full_mask = self.get_mantle_mask(image_no)
             mask_ind = self.get_mantle_ind(image_no)
-        
+
+        # Load the masks for the specified image
         masks = self.load_masks(image_no)
+
+        # Extract the specific mask object associated with the mask index
         mask = self._get_object(full_mask, masks[mask_ind])
-      
+
+        # Calculate the angle of rotation for the mask
         angle = self._get_ellipse_angle(mask)
-        
+
         if cf:
-            rotated_mesh = scipy.ndimage.rotate(mask, angle+180)
+            # If 'cf' is True, rotate the mask by the angle + 180 degrees
+            rotated_mesh = scipy.ndimage.rotate(mask, angle + 180)
         else:
+            # If 'cf' is False, rotate the mask by the angle
             rotated_mesh = scipy.ndimage.rotate(mask, angle)
-            
-        rotated_contours, hierarchy  = cv2.findContours(rotated_mesh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Apply connected component labeling to the rotated mask
+        num_labels, labels = cv2.connectedComponents(rotated_mesh)
+
+        if num_labels > 2:
+            # If there are more than 2 components, find the largest connected component
+
+            # Initialize a dictionary to store the size of each component
+            component_sizes = {}
+
+            # Calculate the size of each connected component
+            for label in range(1, num_labels):  # Skip label 0, which represents the background
+                component_size = np.sum(labels == label)
+                component_sizes[label] = component_size
+
+            # Find the label of the largest connected component
+            largest_component_label = max(component_sizes, key=component_sizes.get)
+
+            # Access the largest component using the label
+            rotated_mesh = (labels == largest_component_label).astype(np.uint8)
+
+        # Find the contours of the rotated mask
+        rotated_contours, hierarchy = cv2.findContours(rotated_mesh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Get the contour of the rotated mask
         rotated_contour = rotated_contours[0]
-        
-        max_rect = lir.lir(np.array(rotated_mesh,'bool'), rotated_contour[:, 0, :])
-        
+
+        # Calculate the maximum rectangle inscribed within the rotated mask
+        max_rect = lir.lir(np.array(rotated_mesh, 'bool'), rotated_contour[:, 0, :])
+
+        # Return the maximum inscribed rectangle
         return max_rect
+
     
     
     
@@ -619,19 +781,80 @@ class CuttleData:
         Returns:
             np.ndarray: inscribed rectangle image
         """
-        if cf: 
-            rotated= self.get_cuttlefish(image_no)
+        # Determine whether to use cuttlefish or mantle data
+        if cf:
+            # If 'cf' is True, get the cuttlefish image and its inscribed rectangle
+            rotated = self.get_cuttlefish(image_no)
             max_rect = self._get_inscribed_rectangle(image_no)
-        else: 
+        else:
+            # If 'cf' is False, get the mantle image and its inscribed rectangle
             rotated = self.get_mantle(image_no)
             max_rect = self._get_inscribed_rectangle(image_no, cf)
+
+        # Display the rotated image with the inscribed rectangle
+
+        # Show the rotated image
         plt.imshow(rotated)
-        rect = Rectangle((max_rect[0], max_rect[1]), max_rect[2], max_rect[3],linewidth=1,edgecolor='r',facecolor='none')
+
+        # Create a red rectangle for the inscribed rectangle
+        rect = Rectangle((max_rect[0], max_rect[1]), max_rect[2], max_rect[3], linewidth=1, edgecolor='r', facecolor='none')
+
+        # Add the inscribed rectangle to the plot
         plt.gca().add_patch(rect)
+
+        # Show the plot with the inscribed rectangle
         plt.show()
-        plt.imshow(rotated[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]])
+
+        # Display the portion of the rotated image inside the inscribed rectangle
+
+        # Show the specified region of the rotated image
+        plt.imshow(rotated[max_rect[1]:max_rect[3] + max_rect[1], max_rect[0]:max_rect[2] + max_rect[0]])
+
+        # Show the specified region
         plt.show()
-        return rotated[max_rect[1]:max_rect[3]+max_rect[1],max_rect[0]:max_rect[2]+max_rect[0]]
+
+        # Return the specified region of the rotated image
+        return rotated[max_rect[1]:max_rect[3] + max_rect[1], max_rect[0]:max_rect[2] + max_rect[0]]
+
+    
+    def plot_bounding_box(self, image_no, cf = True):
+        """
+        Plot an image with a bounding box and its center.
+
+        Args:
+            image_no (int): The image number.
+            cf (bool): If True, plots the bounding box for the cytoplasmic region.
+                       If False, plots the bounding box for the mantle region.
+
+        This function loads an image, retrieves the bounding box and center coordinates for the specified region,
+        and then plots the image with the bounding box drawn in red and the center marked with a point.
+        """
+        # Load the image for the specified image number
+        img = self.load_image(image_no)
+
+        # Get the bounding box for the specified region (cuttlefish or mantle)
+        bbox = self.get_bounding_box(image_no, cf=cf)
+
+        # Get the center coordinates of the bounding box
+        bbox_center = self.get_bounding_box_center(image_no, cf=cf)
+
+        # Display the image with the bounding box and its center
+
+        # Show the image
+        plt.imshow(img)
+
+        # Create a red rectangle for the bounding box
+        rect = Rectangle((bbox[0], bbox[1]), bbox[2], bbox[3], linewidth=1, edgecolor='r', facecolor='none')
+
+        # Add the bounding box to the plot
+        plt.gca().add_patch(rect)
+
+        # Add a blue dot at the center of the bounding box
+        plt.scatter(bbox_center[0], bbox_center[1])
+
+        # Show the plot with the bounding box and center
+        plt.show()
+
     
     def get_cuttlefish_and_mask(self, image_no, cf = True):
         """
@@ -647,24 +870,33 @@ class CuttleData:
             np.ndarray: inscribed rectangle image
         """
         
+        # Load the masks for the specified image
         masks = self.load_masks(image_no)
+
+        # Load the image for the specified image number
         image = self.load_image(image_no)
-        
-        if cf: 
+
+        if cf:
+            # If 'cf' is True, get the cuttlefish mask index and decode the segmentation mask
             mask_ind = self.get_cf_ind(image_no)
             full_mask = mask_utils.decode(masks[mask_ind]["segmentation"])
         else:
+            # If 'cf' is False, get the mantle mask index and decode the segmentation mask
             mask_ind = self.get_mantle_ind(image_no)
             full_mask = mask_utils.decode(masks[mask_ind]["segmentation"])
-            
+
+        # Find indices where the segmentation mask is zero (non-cuttlefish region)
         non_cf_inds = np.where(full_mask == 0)
 
+        # Set the pixel values of the non-cuttlefish region to 255 (white) for all color channels
         for ii in range(3):
             image[:, :, ii][non_cf_inds] = 255
 
+        # Extract the cuttlefish object and mask from the image and segmentation mask
         new_image = self._get_object(image, masks[mask_ind])
         mask = self._get_object(full_mask, masks[mask_ind])
-        
+
+        # Return the modified image and cuttlefish mask
         return new_image, mask
     
     def mean_rgb(self, image_no, cf = True):
@@ -682,7 +914,20 @@ class CuttleData:
        
         image, mask = self.get_cuttlefish_and_mask(image_no, cf)
         return np.mean(image[np.where(mask != 0)])
+    
+    def mean_bg(self, image_no, seed = 3000):
+        """
+        Calculate the mean value of the background pattern in an image.
 
+        Args:
+            image_no (int): The image number.
+            seed (int): A seed for randomization.
+
+        Returns:
+            float: The mean value of the background pattern in the specified image.
+        """
+        
+        return np.mean(self.get_background_pattern( image_no, seed, show_image = False))
             
 
 
@@ -698,8 +943,6 @@ class CuttleData:
             end_frame = start_frame + 1
             
         # Getting bounding box center is equivalent to fitting an ellipse and taking its center
-        
-        
         x_start, y_start = self.get_bounding_box_center(start_frame, cf)
         x_end, y_end = self.get_bounding_box_center(end_frame, cf)
        
@@ -707,18 +950,55 @@ class CuttleData:
         return math.sqrt((x_start - x_end)**2 + (y_start - y_end)**2)
 
     def get_bounding_box_center(self, image_no, cf= True):
+        """
+        Get the center coordinates of the bounding box.
+
+        Args:
+            image_no (int): The image number.
+            cf (bool): If True, retrieves the bounding box for the cuttlefish. 
+                       If False, retrieves the bounding box for the mantle.
+
+        Returns:
+            tuple: A tuple containing the x and y coordinates of the center of the bounding box.
+        """
     
+        bbox = self.get_bounding_box(image_no, cf)
         
+        y_center, x_center = bbox[1] + bbox[3]/2, bbox[0] + bbox[2]/2
+        
+        return x_center, y_center
+    
+    def get_bounding_box(self, image_no, cf= True):
+        """
+        Get the bounding box for a specified region.
+
+        Args:
+            image_no (int): The image number.
+            cf (bool): If True, retrieves the bounding box for the cytoplasmic region. 
+                       If False, retrieves the bounding box for the mantle region.
+
+        Returns:
+            list: A list containing the coordinates and dimensions of the bounding box.
+        """
+    
         if cf:
+            # If 'cf' is True, get the index for the cuttlefish mask
             mask_ind = self.get_cf_ind(image_no)
         else:
+            # If 'cf' is False, get the index for the mantle mask
             mask_ind = self.get_mantle_ind(image_no)
-        
+
+        # Load the masks for the specified image
         masks = self.load_masks(image_no)
+
+        # Retrieve the mask associated with the determined mask index
         mask = masks[mask_ind]
+
+        # Get the bounding box coordinates and dimensions from the mask
         bbox = mask['bbox']
-        y_center, x_center = bbox[1] + bbox[3]/2, bbox[0] + bbox[2]/2
-        return x_center, y_center
+
+        # Return the bounding box information
+        return bbox
     
     def background_pattern(self, image_no):
         """
@@ -731,15 +1011,22 @@ class CuttleData:
         pass
     
     def rgb2gray(self, rgb):
-        
+        """
+        Convert an RGB image to grayscale using luminance conversion.
 
+        Args:
+            rgb (numpy.ndarray): An RGB image represented as a NumPy array.
+
+        Returns:
+            numpy.ndarray: Grayscale version of the input image.
+        """
         r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
         gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
 
         return gray
 
 
-    def compute_texture_statistics(self, image_no, cf = False, spatial_corr_width = 7):
+    def texture_statistics(self, image_no, img_size = 224, cf = False, background = False, seed = 3000, spatial_corr_width = 7):
         """
         Gets Portilla and Simoncelli textures statistics via Plenoptic.
         Computes statistics on the output of either get_cuttlefish_pattern or 
@@ -755,93 +1042,308 @@ class CuttleData:
             stats (np.array): Array of texture statistics
             
         """
-        img_size = 224
-        if cf: 
-            img = self.get_cuttlefish_pattern(image_no) # Get the cuttlefish pattern
+        
+        if background:
+            # If 'background' is True, get the background pattern image
+            img = self.get_background_pattern(image_no, seed=seed, show_image=False)
+        elif cf:
+            # If 'background' is False and 'cf' is True, get the cuttlefish pattern
+            img = self.get_cuttlefish_pattern(image_no)
         else:
-            img = self.get_mantle_pattern(image_no) # Get the mantle pattern
-            
-        gray_img = self.rgb2gray(img) # Convert image to gray scale
-        resized_img = gray_img[:img_size,:img_size] # Texture model is finicky in terms of size
-        img = torch.from_numpy(np.array([[resized_img]])).float() # Prepare image for torch
-        
-        
-        # Initialize the minimal model. Use same params as paper
-        model_min = PortillaSimoncelliMinimalStats([img_size,img_size], n_scales=4,
+            # If neither 'background' nor 'cf' is True, get the mantle pattern
+            img = self.get_mantle_pattern(image_no)
+
+        # Convert the image to grayscale
+        gray_img = self.rgb2gray(img)
+
+        # Resize the grayscale image (texture model's size preference)
+        resized_img = gray_img[:img_size, :img_size]
+
+        # Prepare the image for PyTorch
+        img = torch.from_numpy(np.array([[resized_img]])).float()
+
+        # Initialize the minimal model with specific parameters
+        model_min = PortillaSimoncelliMinimalStats([img_size, img_size], n_scales=4,
                                                   n_orientations=4,
                                                   spatial_corr_width=spatial_corr_width,
                                                   use_true_correlations=False)
 
-        # Extract the dictionary indicating which statistics are the minimal set
+        # Extract the dictionary indicating which statistics are in the minimal set
         mask_min_dict = model_min.statistics_mask
-        
+
+        # Convert the dictionary of statistics to a vector
         mask_min_vec = model_min.convert_to_vector(mask_min_dict)
+
+        # Compute statistics from the image
         stats = model_min(img)
+
+        # Extract minimal statistics
         po_stats = stats[mask_min_vec]
-        
+
+        # Create a dictionary to map statistics to labels
         dict_of_stat_labels = {}
         for key in mask_min_dict:
-
             dict_of_stat_labels[key] = np.where(mask_min_dict[key], key, 'False')
-            
-        # Below is the equivalent of using .convert_to_vector but for array of strings 
-        # stat_label_vec = model_min.convert_to_vector(dict_of_stat_labels)
+
+        # Flatten and extract labels
         all_label_vec = []
         for (_, val) in dict_of_stat_labels.items():
             all_label_vec += list(np.ndarray.flatten(np.squeeze(val)))
-            
-        label_vec= list(np.array(all_label_vec)[mask_min_vec.squeeze()])
-        
+        label_vec = list(np.array(all_label_vec)[mask_min_vec.squeeze()])
+
+        # Return the minimal statistics and their corresponding labels
         return np.array(po_stats), label_vec
 
     
     def plot_density_scatter(self, points):
-        
-        x = np.array(points)[:,0]
-        y = np.array(points)[:,1]
-        
-        # Calculate the point density
-        xy = np.vstack([x,y])
+        """
+        Plot a density scatter plot of points.
+
+        Args:
+            points (list of tuples): List of (x, y) points.
+
+        This function calculates the point density and creates a scatter plot with point density represented by color.
+        """
+        # Extract the x and y coordinates from the 'points' list
+        x = np.array(points)[:, 0]
+        y = np.array(points)[:, 1]
+
+        # Calculate the point density by stacking the x and y coordinates
+        xy = np.vstack([x, y])
+
+        # Use a Gaussian Kernel Density Estimation (KDE) to estimate point density
         z = gaussian_kde(xy)(xy)
 
+        # Create a new figure and axis for the scatter plot
         fig, ax = plt.subplots()
+
+        # Create a scatter plot of the points with point density represented by color
         ax.scatter(x, 1582 - y, c=z, s=100)
+
+        # Set the x and y axis limits
         plt.xlim(0, 2380)
         plt.ylim(0, 1582)
+
+        # Display the scatter plot
         plt.show()
         
         
                 
     def get_values_across_session(self, func):
+        """
+        Get values computed across multiple sessions and store/retrieve them.
+
+        Args:
+            func (callable): A function to compute values for each session.
+
+        This function computes and stores values obtained from running the given function across multiple sessions.
+        It caches the results in a file for future use.
+        """
         
-        path = self.storage_path + self.images_folder.replace('/','') + '_' + func.__name__ + '.npy'
+        # Define the path for storing or loading cached values
+        path = self.storage_path + self.images_folder.replace('/', '') + '_' + func.__name__ + '.npy'
+
+        # Check if the cached values file exists
         if os.path.exists(path):
-            return np.load(path  )    
-                           
-                           
-        print('values have not been computed before -- may take a bit of time.')
+            # If it exists, load and return the cached values
+            return np.load(path)
+
+        # If the file doesn't exist, the values need to be computed
+        print('Values have not been computed before — this may take some time.')
         values = []
-    
-        for ii in range(1,self.num_frames()): 
-            
-            if ii%100 == 0:
-                print('frame: ', str(ii), '/', str(self.num_frames()))
+
+        # Iterate through frames and compute values using the provided function
+        for ii in range(1, self.num_frames()):
+            if ii % 100 == 0:
+                print('Frame:', str(ii), '/', str(self.num_frames()))
+
             try:
+                # Attempt to compute values using the provided function
                 values.append(func(ii))
-                
+
             except:
-                values.append(values[-1]) 
-                # If don't have mask just copy the last center point and note that its missing
-                
+                # If there's an error, use the last computed value and note that it's missing
+                values.append(values[-1])
+
+        # Save the computed values to the specified path for future use
         np.save(path, values)
+
+        # Return the computed values
         return values
-        
 
     
     def mean_image(self, image_no):
+        """
+        Calculate the mean value of an image.
+
+        Args:
+            image_no (int): The image number.
+
+        Returns:
+            float: The mean value of the specified image.
+        """
         v = self.load_image(image_no)
         return np.mean(v)
-              
+    
+    def isOverlap(self, interval1, interval2):
+        """
+        Check if two intervals overlap.
+
+        Args:
+            interval1 (Interval): The first interval.
+            interval2 (Interval): The second interval.
+
+        Returns:
+            bool: True if the intervals overlap, False otherwise.
+        """
+        return interval1.end > interval2.start and interval1.start < interval2.end
+
+
+    
+    def get_background_pattern_bbox(self, image_no, seed = 3000):
+        """
+        Get the bounding box for a background pattern.
+
+        Args:
+            image_no (int): The image number.
+            seed (int): A seed for randomization.
+
+        Returns:
+            list: A list containing the coordinates and dimensions of the bounding box.
+        """
+        # Set the random seed for repeatability
+        random.seed(seed)
+
+        # Load the image for the specified image number
+        img = self.load_image(image_no)
+
+        # Get the dimensions of the image
+        image_height, image_width, _ = np.shape(img)
+
+        # Get the coordinates and dimensions of the bounding box for the foreground object
+        point_x, point_y, bbox_width, bbox_height = self.get_bounding_box(image_no)
+
+        # Initialize empty lists to store potential background pattern positions
+        xs = []
+        ys = []
+
+        # Define intervals for the foreground object in both x and y directions
+        prop_x_int = Interval(point_x, point_x + bbox_width)
+        prop_y_int = Interval(point_y, point_y + bbox_height)
+
+        # Loop through possible positions within the image
+        for ii in range(250, image_width - bbox_width - 300):
+            for jj in range(200, image_height - bbox_height - 150):
+                # Exclude certain regions (ii < 420 and jj < 400) from consideration
+                if ii < 420 and jj < 400:
+                    pass
+                else:
+                    # Create intervals for the current position in x and y
+                    x_interval = Interval(ii, ii + bbox_width)
+                    y_interval = Interval(jj, jj + bbox_height)
+
+                    # Check for overlap with the foreground object
+                    if self.isOverlap(x_interval, prop_x_int) and self.isOverlap(y_interval, prop_y_int):
+                        pass
+                    else:
+                        # If no overlap, store the position
+                        xs.append(ii)
+                        ys.append(jj)
+
+        # Randomly select an index for the potential positions
+        ind = random.randint(0, len(xs))
+
+        # Return the coordinates and dimensions of the selected background pattern
+        return [xs[ind], ys[ind], bbox_width, bbox_height]
+    
+    
+    def get_background_pattern(self, image_no, seed = 3000, show_image = True):
+        """
+        Get the background pattern from an image.
+
+        Args:
+            image_no (int): The image number.
+            seed (int): A seed for randomization.
+            show_image (bool): Whether to display the background pattern.
+
+        Returns:
+            numpy.ndarray: The background pattern.
+        """
+        # Load the image for the specified image number
+        img = self.load_image(image_no)
+
+        # Get the bounding box for the background pattern with the specified seed
+        bbox = self.get_background_pattern_bbox(image_no, seed=seed)
+
+        # Extract the background pattern from the image using the bounding box coordinates
+        pattern = img[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
+
+        # If show_image is True, display the background pattern
+        if show_image:
+            plt.imshow(pattern)
+            plt.show()
+
+        # Return the extracted background pattern
+        return pattern
+    
+    def plot_background_pattern(self, image_no, seed = 3000):
+        """
+        Plot the image with bounding boxes for the foreground and background patterns.
+
+        Args:
+            image_no (int): The image number.
+            seed (int): A seed for randomization.
+
+        This function plots the image with bounding boxes for both foreground and background patterns.
+        """
+        # Load the image for the specified image number
+        img = self.load_image(image_no)
+
+        # Display the image
+        plt.imshow(img)
+
+        # Get the bounding box for the specified image
+        bbox = self.get_bounding_box(image_no)
+
+        # Get the bounding box for the background pattern with a specified seed
+        bg_sample = self.get_background_pattern_bbox(image_no, seed)
+
+        # Create a red rectangle for the foreground bounding box
+        rect = Rectangle((bbox[0], bbox[1]), bbox[2], bbox[3], linewidth=1, edgecolor='r', facecolor='none')
+
+        # Add the foreground bounding box to the plot
+        plt.gca().add_patch(rect)
+
+        # Create a blue rectangle for the background pattern bounding box
+        rect2 = Rectangle((bg_sample[0], bg_sample[1]), bg_sample[2], bg_sample[3], linewidth=1, edgecolor='b', facecolor='none')
+
+        # Add the background pattern bounding box to the plot
+        plt.gca().add_patch(rect2)
+
+        # Display the plot with the bounding boxes
+        plt.show()
+        
+    def swap_1_and_0(self, mask_array):
+        """
+        Swap 1s and 0s in a binary mask array.
+
+        Args:
+            mask_array (numpy.ndarray): A binary mask array with values 0 and 1.
+
+        Returns:
+            numpy.ndarray: A copy of the input array with 1s and 0s swapped.
+        """
+        # Create a copy of the mask array
+        swapped_array = np.copy(mask_array)
+
+        # Swap 1 and 0 in the copied array
+        swapped_array[mask_array == 1] = 0
+        swapped_array[mask_array == 0] = 1
+        return swapped_array
+
+
+
+
         
         
     
