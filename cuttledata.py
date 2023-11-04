@@ -118,7 +118,6 @@ class CuttleData:
 
         # Sort the good mask indices by area from largest to smallest
         good_inds = np.array(good_inds)[np.argsort(good_areas)][::-1]
-        print(good_inds)
         # Check for duplicate areas and remove duplicates
         if len(good_areas) > 1 and np.abs(good_areas[0] - good_areas[1]) < 1000:
             good_areas = np.delete(good_areas, 1)
