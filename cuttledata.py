@@ -398,6 +398,8 @@ class CuttleData:
 
         # Get the cuttlefish mask object using the specified mask index
         cf_mask = self._get_object(full_cuttlefish_mask, masks[cf_mask_ind])
+        
+        cf_mask = self._remove_extraneous_parts(cf_mask)
 
         # Attempt to calculate the angle of rotation for the cuttlefish mask, or set it to 0 if there's an error
         try:
@@ -423,6 +425,33 @@ class CuttleData:
         # Return the rotated cuttlefish image
         return rotated_cuttlefish
 
+    
+    def _remove_extraneous_parts(self, mask):
+           
+        # Apply connected component labeling to the rotated mask
+        num_labels, labels = cv2.connectedComponents(mask)
+
+        if num_labels > 2:
+            # If there are more than 2 components, find the largest connected component
+
+            # Initialize a dictionary to store the size of each component
+            component_sizes = {}
+
+            # Calculate the size of each connected component
+            for label in range(1, num_labels):  # Skip label 0, which represents the background
+                component_size = np.sum(labels == label)
+                component_sizes[label] = component_size
+
+            # Find the label of the largest connected component
+            largest_component_label = max(component_sizes, key=component_sizes.get)
+
+            # Access the largest component using the label
+            mask = (labels == largest_component_label).astype(np.uint8)
+        return mask
+
+
+    
+    
     def get_mantle(self, image_no, show_image = True, title = False):
         """
         Retrieves the rotated mantle image.
@@ -459,6 +488,10 @@ class CuttleData:
 
             # Get the mantle mask object using the specified mask index
             mantle_mask = self._get_object(full_mantle_mask, masks[mantle_mask_ind])
+            
+            
+            mantle_mask = self._remove_extraneous_parts(mantle_mask)
+            
 
             # Calculate the angle of rotation for the mantle mask
             angle = self._get_ellipse_angle(mantle_mask)
@@ -681,7 +714,9 @@ class CuttleData:
 
         # Extract the specific mask object associated with the mask index
         mask = self._get_object(full_mask, masks[mask_ind])
-
+        
+        mask = self._remove_extraneous_parts(mask)
+        
         # Calculate the angle of rotation for the mask
         angle = self._get_ellipse_angle(mask)
 
@@ -691,26 +726,6 @@ class CuttleData:
         else:
             # If 'cf' is False, rotate the mask by the angle
             rotated_mesh = scipy.ndimage.rotate(mask, angle)
-
-        # Apply connected component labeling to the rotated mask
-        num_labels, labels = cv2.connectedComponents(rotated_mesh)
-
-        if num_labels > 2:
-            # If there are more than 2 components, find the largest connected component
-
-            # Initialize a dictionary to store the size of each component
-            component_sizes = {}
-
-            # Calculate the size of each connected component
-            for label in range(1, num_labels):  # Skip label 0, which represents the background
-                component_size = np.sum(labels == label)
-                component_sizes[label] = component_size
-
-            # Find the label of the largest connected component
-            largest_component_label = max(component_sizes, key=component_sizes.get)
-
-            # Access the largest component using the label
-            rotated_mesh = (labels == largest_component_label).astype(np.uint8)
 
         # Find the contours of the rotated mask
         rotated_contours, hierarchy = cv2.findContours(rotated_mesh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
