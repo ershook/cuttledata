@@ -45,9 +45,16 @@ class CuttleData:
         else:
             raise Exception("Can't find path to data -- are you sure axel-locker is mounted?")
         
-        
+        self.mask_downsample_factor = 1 
         self.images_folder = images_folder
         self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
+        if not os.path.exists(self.images_path):
+          
+            self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/0_5_pop_color_1/tifs/0'
+            self.mask_downsample_factor = .5
+            
+     
+        
         self.path_to_masks = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/sam_data/' + images_folder + '/'
         knob_inds = np.load(prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/knob_inds.npy')
         self.knob_inds = (knob_inds[0], knob_inds[1])
@@ -117,7 +124,9 @@ class CuttleData:
                 good_areas.append(areas[mask_ii])
 
         # Sort the good mask indices by area from largest to smallest
+        
         good_inds = np.array(good_inds)[np.argsort(good_areas)][::-1]
+        good_areas = np.sort(good_areas)[::-1]
         # Check for duplicate areas and remove duplicates
         if len(good_areas) > 1 and np.abs(good_areas[0] - good_areas[1]) < 1000:
             good_areas = np.delete(good_areas, 1)
@@ -311,7 +320,10 @@ class CuttleData:
         else:
             image_file = f"{self.images_path}{str(image_no).zfill(5)}.tif"
             image = cv2.imread(image_file)
+            if self.mask_downsample_factor != 1:
+                image = cv2.resize(image, (0, 0), fx=self.mask_downsample_factor, fy=self.mask_downsample_factor, interpolation=cv2.INTER_AREA)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
             return image
         
         
@@ -428,24 +440,24 @@ class CuttleData:
     def _remove_extraneous_parts(self, mask):
            
         # Apply connected component labeling to the rotated mask
-        num_labels, labels = cv2.connectedComponents(mask)
+        #num_labels, labels = cv2.connectedComponents(mask)
 
-        if num_labels > 2:
+        #if num_labels > 2:
             # If there are more than 2 components, find the largest connected component
 
             # Initialize a dictionary to store the size of each component
-            component_sizes = {}
+        #    component_sizes = {}
 
             # Calculate the size of each connected component
-            for label in range(1, num_labels):  # Skip label 0, which represents the background
-                component_size = np.sum(labels == label)
-                component_sizes[label] = component_size
+       #     for label in range(1, num_labels):  # Skip label 0, which represents the background
+        #        component_size = np.sum(labels == label)
+       #         component_sizes[label] = component_size
 
             # Find the label of the largest connected component
-            largest_component_label = max(component_sizes, key=component_sizes.get)
+       #     largest_component_label = max(component_sizes, key=component_sizes.get)
 
             # Access the largest component using the label
-            mask = (labels == largest_component_label).astype(np.uint8)
+       #     mask = (labels == largest_component_label).astype(np.uint8)
         return mask
 
 
@@ -474,7 +486,7 @@ class CuttleData:
             # Load masks and the image for the specified image
             masks = self.load_masks(image_no)
             image = self.load_image(image_no)
-
+            
             # Find indices where the mantle mask is equal to 0 (non-mantle region)
             non_mantle_inds = np.where(full_mantle_mask == 0)
 
@@ -487,11 +499,7 @@ class CuttleData:
 
             # Get the mantle mask object using the specified mask index
             mantle_mask = self._get_object(full_mantle_mask, masks[mantle_mask_ind])
-            
-            
-            mantle_mask = self._remove_extraneous_parts(mantle_mask)
-            
-
+     
             # Calculate the angle of rotation for the mantle mask
             angle = self._get_ellipse_angle(mantle_mask)
 
@@ -579,11 +587,13 @@ class CuttleData:
             raise Exception("Don't have a mantle mask")
             
         full_mantle_mask = mask_utils.decode(masks[mantle_ind]["segmentation"])
-        
+        full_mantle_mask = self._remove_extraneous_parts(full_mantle_mask)
+       # if self.mask_downsample_factor != 1:
+         #   full_mantle_mask = cv2.resize(full_mantle_mask, (0, 0), fx=self.mask_downsample_factor, fy=self.mask_downsample_factor, interpolation=cv2.INTER_AREA)
         if show_image:
             plt.imshow(full_mantle_mask)
             plt.show()
-       
+           
         return full_mantle_mask
 
     def get_cuttlefish_mask(self, image_no, show_image = False):
@@ -603,7 +613,9 @@ class CuttleData:
             raise Exception("Don't have a cuttlefish mask")
             
         full_cuttlefish_mask = mask_utils.decode(masks[cf_ind]["segmentation"])
-        
+        full_cuttlefish_mask = self._remove_extraneous_parts(full_cuttlefish_mask)
+        #if self.mask_downsample_factor != 1:
+        #    full_cuttlefish_mask = cv2.resize(full_cuttlefish_mask, (0, 0), fx=self.mask_downsample_factor, fy=self.mask_downsample_factor, interpolation=cv2.INTER_AREA)
         if show_image:
             plt.imshow(full_cuttlefish_mask)
             plt.show()
