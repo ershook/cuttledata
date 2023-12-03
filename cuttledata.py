@@ -36,12 +36,17 @@ class CuttleData:
             images_folder (str): Folder containing the behavior images..
         """
         # Determine what os system code is running on: 
+        axel_server_path = ('/').join(os.getcwd().split('/')[:3])+'/engram/'
+
         if os.path.exists('/mnt/smb/locker/axel-locker/'):
             prefix = '/mnt/smb/locker/axel-locker/'
         elif os.path.exists('/Volumes/axel-locker/'):
             prefix = '/Volumes/axel-locker/'
         elif os.path.exists('Z:/cuttlefish'):
             prefix = 'Z:/'
+
+        elif os.path.exists(axel_server_path):
+            prefix = axel_server_path 
         else:
             raise Exception("Can't find path to data -- are you sure axel-locker is mounted?")
         
@@ -50,7 +55,7 @@ class CuttleData:
         self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/Tifs_downsampled/'
         if not os.path.exists(self.images_path):
           
-            self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/0_5_pop_color_1/tifs/0'
+            self.images_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/2023_BEHAVIOR/E-ink_Tank/'+images_folder+'/0_5_pop_color_1/tifs/'
             self.mask_downsample_factor = .5
             
      
@@ -318,7 +323,7 @@ class CuttleData:
         if image_no ==0:
             raise Exception("Remember tiff files start at 1 not 0 :/")
         else:
-            image_file = f"{self.images_path}{str(image_no).zfill(5)}.tif"
+            image_file = f"{self.images_path}{str(image_no).zfill(6)}.tif"
             image = cv2.imread(image_file)
             if self.mask_downsample_factor != 1:
                 image = cv2.resize(image, (0, 0), fx=self.mask_downsample_factor, fy=self.mask_downsample_factor, interpolation=cv2.INTER_AREA)
