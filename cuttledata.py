@@ -8,6 +8,9 @@ from pycocotools import mask as mask_utils
 from matplotlib.patches import Rectangle
 from scipy.stats import gaussian_kde
 
+from tensorflow.keras.applications import vgg19
+from keract import get_activations
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
 
 import largestinteriorrectangle as lir
 from PortillaSimoncelliMinimalStats import *
@@ -381,7 +384,7 @@ class CuttleData:
         (_, _), (_, _), angle = cv2.fitEllipse(contour)
         return angle
 
-    def get_cuttlefish(self, image_no, title = False, show_image=True, correct_flip = True):
+    def get_cuttlefish(self, image_no, title = False, show_image=True, correct_flip = True, bg_color = 255):
         """
         Retrieves the rotated cuttlefish image and its angle.
 
@@ -407,7 +410,7 @@ class CuttleData:
 
         # Iterate through all color channels and set pixel values to 255 (white) in non-cuttlefish regions
         for ii in range(3):
-            image[:, :, ii][non_cf_inds] = 255
+            image[:, :, ii][non_cf_inds] = bg_color
 
         # Get the cuttlefish image using the specified mask index
         cf_image = self._get_object(image, masks[cf_mask_ind])
@@ -422,14 +425,14 @@ class CuttleData:
             angle = self._get_ellipse_angle(cf_mask)
         except:
             angle = 0
-
+        
         # Rotate the cuttlefish image by the calculated angle + 180 degrees and resize with padding as 255 (white)
-        rotated_cuttlefish = skimage.transform.rotate(cf_image, angle + 180, resize=True, cval=255)
+        rotated_cuttlefish = skimage.transform.rotate(cf_image, angle + 180, resize=True, cval=bg_color/255.)
 
         # If 'correct_flip' is True and the mantle mask index is valid, check if the cuttlefish is upside down
         if correct_flip and self.get_mantle_ind(image_no) != 'ERR' and self._is_cuttlefish_upside_down(image_no, masks, angle, full_cuttlefish_mask, non_cf_inds):
             # If upside down, rotate the cuttlefish image by 180 degrees and resize with padding as 255 (white)
-            rotated_cuttlefish = skimage.transform.rotate(rotated_cuttlefish, 180, resize=True, cval=255)
+            rotated_cuttlefish = skimage.transform.rotate(rotated_cuttlefish, 180, resize=True, cval=bg_color/255.)
 
         # If 'show_image' is True, display the rotated cuttlefish image without axis labels and with an optional title
         if show_image:
@@ -1371,6 +1374,82 @@ class CuttleData:
         swapped_array[mask_array == 1] = 0
         swapped_array[mask_array == 0] = 1
         return swapped_array
+
+
+    
+
+    def preprocess_image(self, img,img_width=224,img_height=224):
+        # From Laurent lab: https://gitlab.mpcdf.mpg.de/mpibr/laur/cuttlefish/texture-code/-/blob/main/featurespace.py?ref_type=heads
+
+
+        # from keract import get_activations
+        from tensorflow.keras.preprocessing.image import load_img, img_to_array
+        img = img_to_array(img)
+        img = cv2.resize(img, dsize=(img_width,img_height), interpolation=cv2.INTER_NEAREST)
+
+        if len(img.shape)==2:
+            img = img.reshape((img.shape[0], img.shape[1], 1))
+            img=np.concatenate((img, img,img),axis=2)
+
+
+        img = img.reshape((1, img.shape[0], img.shape[1], img.shape[2]))
+        img = img.astype('float32')
+        img = vgg19.preprocess_input(img)
+        return img
+
+
+
+
+    def gram_matrix(self, x):
+        # From Laurent lab: https://gitlab.mpcdf.mpg.de/mpibr/laur/cuttlefish/texture-code/-/blob/main/featurespace.py?ref_type=heads
+
+        x = np.squeeze(x)
+        dims = x.shape
+        features = np.reshape(np.transpose(x,(2,0,1)),(dims[2],dims[0]*dims[1]))
+        gram = np.dot(features, np.transpose(features))
+        return gram
+
+
+    def style_rep(self, style):
+        # From Laurent lab: https://gitlab.mpcdf.mpg.de/mpibr/laur/cuttlefish/texture-code/-/blob/main/featurespace.py?ref_type=heads
+
+        style=np.squeeze(style)
+        dims = style.shape
+        S = self.gram_matrix(style)
+        size=dims[0]*dims[1]*dims[2]
+        return S / (size ** 2)  #think about this normalization some more. Now it's to sort of match the texture synthesis
+
+
+    def get_vgg19_activations(self, image_no, model = 'DEFAULT', LAYER = 'block5_conv1', sz=224):
+        # based on Laurent lab: https://gitlab.mpcdf.mpg.de/mpibr/laur/cuttlefish/texture-code/-/blob/main/featurespace.py?ref_type=heads
+        img = self.get_cuttlefish(image_no, show_image = False, bg_color = 127)
+        if model == 'DEFAULT':
+            model = vgg19.VGG19(weights='imagenet', include_top=False)
+
+        currImg = self.preprocess_image(img,sz,sz)
+        model.compile(loss="categorical_crossentropy", optimizer="adam")
+        activations = get_activations(model, currImg, layer_names=[LAYER], auto_compile=True)[LAYER]
+
+        return activations
+
+    def laurentlab_texrep(self, acts):
+        # based on Laurent lab: https://gitlab.mpcdf.mpg.de/mpibr/laur/cuttlefish/texture-code/-/blob/main/featurespace.py?ref_type=heads
+        fifth = acts.max(axis=(1,2))
+        vggRep = fifth.ravel()
+        return vggRep
+
+
+    def get_gram_matrix(self, image_no):
+        acts = self.get_vgg19_activations(image_no)
+        return self.gram_matrix(acts)
+
+    def get_ll_texrep(self, image_no):
+        acts = self.get_vgg19_activations(image_no)
+        return self.laurentlab_texrep(acts)
+
+    def get_style_rep(self, image_no):
+        acts = self.get_vgg19_activations(image_no)
+        return self.style_rep(acts)
 
 
 
