@@ -16,6 +16,7 @@ import largestinteriorrectangle as lir
 from PortillaSimoncelliMinimalStats import *
 import plenoptic as po
 import random 
+import math
 
 import cv2
 
