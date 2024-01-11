@@ -1,26 +1,46 @@
+# Standard library imports
 import os
 import json
-import matplotlib.pyplot as plt
+import math
+import random
+import time
+import warnings
+from tempfile import TemporaryDirectory
+
+# Third-party imports for data manipulation and numerical operations
 import numpy as np
+import pandas as pd
 import scipy.ndimage
-import skimage.transform
-from pycocotools import mask as mask_utils
-from matplotlib.patches import Rectangle
 from scipy.stats import gaussian_kde
 
-from tensorflow.keras.applications import vgg19
-from keract import get_activations
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
+# Image processing and computer vision libraries
+import cv2
+from PIL import Image
+import skimage.transform
+from pycocotools import mask as mask_utils
 
+# Machine learning and deep learning libraries
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim import lr_scheduler
+import torchvision
+from torchvision import datasets, models, transforms
+from torchvision.io import read_image
+import torch.backends.cudnn as cudnn
+from tensorflow.keras.applications import vgg19
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from keract import get_activations
+
+# Visualization libraries
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+
+# Custom module imports
 import largestinteriorrectangle as lir
 from PortillaSimoncelliMinimalStats import *
 import plenoptic as po
-import random 
-import math
 
-import cv2
-
-import warnings
 warnings.filterwarnings('ignore')
 
 
@@ -63,14 +83,87 @@ class CuttleData:
             self.mask_downsample_factor = .5
             
      
-        
         self.path_to_masks = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/sam_data/' + images_folder + '/'
         knob_inds = np.load(prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/knob_inds.npy')
         self.knob_inds = (knob_inds[0], knob_inds[1])
         self.storage_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/'
+        self.vgg_weights_path = prefix + 'cuttlefish/CUTTLEFISH_BEHAVIOR/cuttle_data_storage/vgg_finetune.pt'
+        self.vgg = True
+
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
     
-    
+    def _get_mask_inds_vgg(self, image_no):
+        new_size = (256,256)
+        
+
+            
+        if  not hasattr(self, "model_ft"):
+
+            
+            model_ft = models.resnet18()
+            num_ftrs = model_ft.fc.in_features
+            # Here the size of each output sample is set to 2.
+            # Alternatively, it can be generalized to ``nn.Linear(num_ftrs, len(class_names))``.
+            model_ft.fc = nn.Linear(num_ftrs, 3)
+
+            model_ft = model_ft.to(self.device)
+
+            criterion = nn.CrossEntropyLoss()
+
+            # Observe that all parameters are being optimized
+            optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
+
+            # Decay LR by a factor of 0.1 every 7 epochs
+            exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
+
+            self.model_ft = model_ft
+            self.model_ft.load_state_dict(torch.load(self.vgg_weights_path))
+            self.model_ft.eval()
+            
+        
+        labels = ['mantle','cf','bg']
+
+        masks = self.load_masks(image_no)
+        results = []
+        for mask in masks:
+        
+
+            # Define the transform
+            transform = transforms.Compose([
+               # transforms.ToTensor(),  # Convert the image to a tensor
+                transforms.Resize((224, 224)),  # Resize the image to a specific size
+            
+            ])
+            mask = self.decode_mask(mask['segmentation'])
+            mask = cv2.resize(mask, new_size, interpolation=cv2.INTER_NEAREST)
+            plt.imsave( 'temp_mask.png', mask)
+
+            # Load and transform the image
+            image = read_image('temp_mask.png')[:3,:,:]
+            transformed_image = transform(image)
+
+            # Add a batch dimension
+            inputs = transformed_image.unsqueeze(0).to(torch.float32)
+            inputs = inputs.to(self.device)
+
+            outputs = self.model_ft(inputs)
+            _, preds = torch.max(outputs, 1)
+            preds = preds.cpu()
+            inputs = inputs.cpu()    
+            results.append(labels[int(np.array(preds)[0])])
+
+        if 'cf' in results:
+            inds = [int(np.where(np.array(results) == 'cf')[0])]
+        else:
+            inds = ['ERR']
+        if 'mantle' in results:
+            inds.append(int(np.where(np.array(results) == 'mantle')[0]))
+        else:
+            inds.append('ERR')
+        return inds
+
+
     def num_frames(self):
         """
         Get the number of frames in the dataset.
@@ -449,24 +542,24 @@ class CuttleData:
     def _remove_extraneous_parts(self, mask):
            
         # Apply connected component labeling to the rotated mask
-        #num_labels, labels = cv2.connectedComponents(mask)
+        num_labels, labels = cv2.connectedComponents(mask)
 
-        #if num_labels > 2:
+        if num_labels > 2:
             # If there are more than 2 components, find the largest connected component
 
             # Initialize a dictionary to store the size of each component
-        #    component_sizes = {}
+            component_sizes = {}
 
             # Calculate the size of each connected component
-       #     for label in range(1, num_labels):  # Skip label 0, which represents the background
-        #        component_size = np.sum(labels == label)
-       #         component_sizes[label] = component_size
+            for label in range(1, num_labels):  # Skip label 0, which represents the background
+                component_size = np.sum(labels == label)
+                component_sizes[label] = component_size
 
             # Find the label of the largest connected component
-       #     largest_component_label = max(component_sizes, key=component_sizes.get)
+            largest_component_label = max(component_sizes, key=component_sizes.get)
 
             # Access the largest component using the label
-       #     mask = (labels == largest_component_label).astype(np.uint8)
+            mask = (labels == largest_component_label).astype(np.uint8)
         return mask
 
 
@@ -562,7 +655,10 @@ class CuttleData:
         Returns:
             int: Cuttlefish index.
         """
-        return self._get_mask_inds(image_no)[0]
+        if self.vgg:
+            return self._get_mask_inds_vgg(image_no)[0]
+        else:
+            return self._get_mask_inds(image_no)[0]
 
     def get_mantle_ind(self, image_no):
         """
@@ -574,7 +670,10 @@ class CuttleData:
         Returns:
             int or str: Mantle index or 'ERR' if not available.
         """
-        inds = self._get_mask_inds(image_no)
+        if self.vgg:
+           inds = self._get_mask_inds_vgg(image_no)
+        else:
+            inds = self._get_mask_inds(image_no)
         if len(inds)>1:
             return inds[1]
         else:
