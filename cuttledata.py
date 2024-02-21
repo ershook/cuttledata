@@ -29,9 +29,9 @@ import torchvision
 from torchvision import datasets, models, transforms
 from torchvision.io import read_image
 import torch.backends.cudnn as cudnn
-from tensorflow.keras.applications import vgg19
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
-from keract import get_activations
+#from tensorflow.keras.applications import vgg19
+#from tensorflow.keras.preprocessing.image import load_img, img_to_array
+#from keract import get_activations
 
 # Visualization libraries
 import matplotlib.pyplot as plt
@@ -349,6 +349,28 @@ class CuttleData:
             numpy.ndarray: The decoded mask as a NumPy array.
         """
         return mask_utils.decode(mask)
+<<<<<<< HEAD
+=======
+
+    def is_image_out_of_focus(self, image_no, threshold=100):
+        """
+        *** NOT TESTED -- USE AT YOUR OWN RISK (but please report back if you do) ***
+        Determines whether an image is out of focus based on its variance of Laplacian.
+
+        Args:
+            image_no (int): Image number.
+            threshold (int): Variance threshold for determining focus. Default is 100.
+        """
+        image_file = f"{self.images_path}{str(image_no).zfill(5)}.tif"
+        image = cv2.imread(image_file)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        variance = laplacian.var()
+        if variance < threshold:
+            print(f"Image {image_no} is out of focus.")
+        else:
+            print(f"Image {image_no} is not out of focus.")
+>>>>>>> 130c1f5 (adding code for daniella)
 
     def load_masks(self, image_no):
         """
