@@ -9,12 +9,12 @@
 ###
 ##########################################################################################
 
-from image_processing_function_3 import convert_png_to_tif, bin_files, process_files, convert_to_clip, combine_videos, resize, temporal_downsample
+from Image_Processing_Functions import convert_png_to_tif, bin_files, process_files, convert_to_clip, combine_videos, resize, temporal_downsample
 import rawpy
 from multiprocessing import Pool, freeze_support
 import math
 import os
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, concatenate_videoclips, VideoClip
 from functools import partial
 from pathlib import Path
 
@@ -43,9 +43,9 @@ def Parallelize_image_processing(input_dir, list_of_images, save_images, make_mo
         for root, dirs, filenames in os.walk(input_dir):
             dirs.sort()
             for filename in sorted(filenames):
-                #print(filename)
-                if filename.lower().endswith(".dng") or filename.lower().endswith(".ARW") or filename.lower().endswith(".arw"):
-                    #print("found raw")
+                print(filename)
+                if filename.lower().endswith(".dng") or filename.lower().endswith(".ARW") or filename.lower().endswith(".arw") or filename.lower().endswith(".tif"):
+                    print("found raw")
                     files.append(os.path.join(root, filename))
 
         #make a dictionary matching each file name with its index in the list. The dictionary is used later for the file naming,
@@ -105,13 +105,15 @@ def Parallelize_image_processing(input_dir, list_of_images, save_images, make_mo
                     if not (os.path.exists(os.path.dirname((os.path.dirname(input_dir))) + "/" + str(list_of_images[-1][0]).replace('.', '_') + "_" + list_of_images[-1][1] + "_" + list_of_images[-1][2] + "_" + str(list_of_images[-1][3]) + "_" + str(downsampling_factor) + "/VideoChunks")):
                         os.makedirs(os.path.dirname((os.path.dirname(input_dir))) + "/" + str(list_of_images[-1][0]).replace('.', '_') + "_" + list_of_images[-1][1] + "_" + list_of_images[-1][2] + "_" + str(list_of_images[-1][3]) + "_" + str(downsampling_factor) + "/VideoChunks")
                     #print(output_file)
+                    try:
+                        # Convert frames to video clips
+                        videos = [video for result in results for video in result]
+                        video_clips = convert_to_clip(videos, fps)
 
-                    # Convert frames to video clips
-                    videos = [video for result in results for video in result]
-                    video_clips = convert_to_clip(videos, fps)
-
-                    # Combine the processed video clips
-                    combine_videos(video_clips, output_file, fps)
+                        # Combine the processed video clips
+                        combine_videos(video_clips, output_file, fps)
+                    except:
+                        print("Error making movie")
 
         # at the end, assemble the concatenated file from the videochunks
         if make_movie:
@@ -159,11 +161,12 @@ for line in lines:
     exec(line)
 
 """
-
+'''
 # Set source_path equal to the folder that contains the image files ("CINEMA")
-source_path='/home/gtb2115/engram/cuttlefish/CUTTLEFISH_BEHAVIOR/2024_BEHAVIOR/Social-Behavior-Experiments/2024-02-17_Social-behavior_1-chamber-removable_Hugin-Munin-Merlin_HEAD-FIXED/CINEMA/'
+source_path='/home/gtb2115/engram/cuttlefish/CUTTLEFISH_BEHAVIOR/2024_BEHAVIOR/Social-Behavior-Experiments/2024-02-19_Social-behavior_1-chamber-removable_Hugin-Munin_CLEAR-GLASS-TEST/CINEMA/'
 # Select the downsampling factor as a fraction, the color grading, whether the output should be black and white or color, and the percentage of the frame to crop off of the sides
-list_of_images = [[1, "raw_for_yellow_aggression", "color", 0],[0.1, "raw", "color", 0]]
+list_of_images = [[1, "raw_for_yellow_aggression", "color", 0]]
 # Start the image processing, setting the source path, list of images to generate, whether you want to save the output as Tifs, whether you want to save the output as an MP4, the frame rate of the mp4, and the temporal downsampling factor
 # (for example, a downsampling factor of 24 will only render one out of every 24 images)
-Parallelize_image_processing(source_path, list_of_images, True, True, 24, 1)
+Parallelize_image_processing(source_path, list_of_images, False, True, 24, 1)
+'''

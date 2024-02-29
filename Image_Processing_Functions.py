@@ -12,57 +12,77 @@ from pathlib import Path
 
 def process_files(file_paths, file_dict1, list_of_images, save_images, make_movie, downsampling_factor):
     if len(file_paths) > 0:
-        '''for file_path in file_paths:
-            generate_files(file_path, file_dict1, list_of_images, save_images, make_movie)'''
-        return [generate_files(file_path, file_dict1, list_of_images, save_images, make_movie, downsampling_factor) for file_path in file_paths]
+        results = []
+        for file_path in file_paths:
+            result = generate_files(file_path, file_dict1, list_of_images, save_images, make_movie, downsampling_factor)
+            if result is not None:
+                results.append(result)
+            else:
+                print(f"Skipping file due to read error: {file_path}")
+        return results
+    else:
+        print("no files in batch")
 
-    else: print("no files in batch")
 
 def generate_files(image_source, file_dict3, list_of_images, save_images, make_movie, downsampling_factor):
-
-    #Load the image once, and store it in this 'rgb' format
     print("reading image file " + str(image_source))
     filename, extension = os.path.splitext(image_source)
     filetype = extension.lower()
-    #print(filetype)
     
-    if filetype == ".DNG" or filetype == ".dng" or filetype == ".ARW" or filetype == ".arw":
-        with rawpy.imread(image_source) as raw:
-            rgb = raw.postprocess(gamma=(50, 50), no_auto_bright=True, output_bps=8)
-    if filetype == ".tif" or filetype == ".tiff" or filetype == ".TIF" or filetype == ".TIFF":
-        rgb = np.array(Image.open(image_source))
+    try:
+        if filetype in [".dng", ".arw", ".tif", ".tiff"]:
+            rgb = None  # Initialize rgb to None for scope reasons
+            if filetype in [".dng", ".arw"]:
+                #print("DNG found)")
+                with rawpy.imread(image_source) as raw:
+                    rgb = raw.postprocess(gamma=(50, 50), no_auto_bright=True, output_bps=8)
+            elif filetype in [".tif", ".tiff"]:
+                #print("TIF found")
+                rgb = np.array(Image.open(image_source))
 
-    #if the image is taller than it is wide, rotate by 90 degrees
-    height, width, _ = rgb.shape
-    if height > width:
-        rgb = np.rot90(rgb)
+            if rgb is not None:
+                
+                #if the image is taller than it is wide, rotate by 90 degrees
+                height, width, _ = rgb.shape
+                if height > width:
+                    rgb = np.rot90(rgb)
 
-    # then look at what images we need to make. For each list of parameters . . .
-    filename = os.path.basename(image_source)
-    file_number = file_dict3.get(filename)
+                # then look at what images we need to make. For each list of parameters . . .
+                filename = os.path.basename(image_source)
+                file_number = file_dict3.get(filename)
 
-    #make every output that you need with this one file
-    for i in range(len(list_of_images)):
+                #make every output that you need with this one file
+                for i in range(len(list_of_images)):
 
-        #save the outputs in a folder with the corresponding name for the image (scaling factor, color grading, color vs black and white, cropped), up two levels from where the DNG image was found
-        output_path = (((os.path.dirname(os.path.dirname(os.path.dirname(image_source)))))) + "/" + str(list_of_images[i][0]).replace('.', '_') + "_" + list_of_images[i][
-                1] + "_" + list_of_images[i][2] + "_" + str(list_of_images[i][3]) + "_" + str(downsampling_factor) + "/tifs/" + str(file_number).zfill(6) + ".tif"
-        # apply the downsampling
-        resized_image = resize(rgb, list_of_images[i][0])
-        # apply the color correction, which involves the color crading and the color-> black and white conversion
-        processed = apply_color(resized_image, list_of_images[i][1], list_of_images[i][2])
-        # crop the image
-        cropped = crop_image(processed, list_of_images[i][3])
-        # save the image in the corresponding directory
+                    #save the outputs in a folder with the corresponding name for the image (scaling factor, color grading, color vs black and white, cropped), up two levels from where the DNG image was found
+                    output_path = (((os.path.dirname(os.path.dirname(os.path.dirname(image_source)))))) + "/" + str(list_of_images[i][0]).replace('.', '_') + "_" + list_of_images[i][
+                            1] + "_" + list_of_images[i][2] + "_" + str(list_of_images[i][3]) + "_" + str(downsampling_factor) + "/tifs/" + str(file_number).zfill(6) + ".tif"
+                    # apply the downsampling
+                    resized_image = resize(rgb, list_of_images[i][0])
+                    # apply the color correction, which involves the color crading and the color-> black and white conversion
+                    processed = apply_color(resized_image, list_of_images[i][1], list_of_images[i][2])
+                    # crop the image
+                    cropped = crop_image(processed, list_of_images[i][3])
+                    # save the image in the corresponding directory
 
-        if save_images:
-            tifffile.imwrite(output_path, cropped.astype('uint8'))
+                    if save_images:
+                        tifffile.imwrite(output_path, cropped.astype('uint8'))
 
-        if make_movie:
-            frame = Image.fromarray(rgb)
+                    if make_movie:
+                        frame = Image.fromarray(rgb)
 
-    #return the last image in the list of images to use to make the video
-    return cropped.astype('uint8')
+                #return the last image in the list of images to use to make the video
+                return cropped.astype('uint8')
+            else:
+                print(f"Unsupported file format for file: {image_source}")
+                return None
+        else:
+            print(f"Unsupported file format for file: {image_source}")
+            return None
+    except Exception as e:
+        print(f"ERROR READING: {filename} due to {e}")
+        return None
+
 
 
 """
@@ -264,6 +284,52 @@ def apply_color(resized, spectrum, grading):
         colored = np.float32(colored)
         colored = colored/256
         #print("pop")
+
+    if spectrum == "pop2":
+        resized = resized*256
+
+        popt_red = np.array([2.49977028e-01, 1.12525005e+00, 5.18763052e+03])
+        popt_green = np.array([5.76949661e-01, 1.04726996e+00, 1.47926918e+03])
+        popt_blue = np.array([7.88687346e+00, 8.20434666e-01, - 9.25428880e+03])
+
+        red_channel = resized[:, :, 0]
+        green_channel = resized[:, :, 1]
+        blue_channel = resized[:, :, 2]
+
+        # Apply the fitted functions to each channel
+        red_output = nonlinear_func(red_channel, *popt_red)
+        green_output = nonlinear_func(green_channel, *popt_green)
+        blue_output = nonlinear_func(blue_channel, *popt_blue)
+
+        red_output_clipped = np.clip(red_output, 0, 65535)
+        green_output_clipped = np.clip(green_output, 0, 65535)
+        blue_output_clipped = np.clip(blue_output, 0, 65535)
+
+        colored = np.stack((red_output_clipped, green_output_clipped, blue_output_clipped), axis=-1)
+
+        #colored = np.clip((2.1 * colored - 32000), 0, 65535)
+        #colored = np.clip((1.8 * colored - 24000), 0, 65535)
+        #colored = np.clip((1.7 * colored - 20000), 0, 65535)
+        colored = 2.3 * colored - 40000
+
+        red_channel = colored[:, :, 0]
+        green_channel = colored[:, :, 1]
+        blue_channel = colored[:, :, 2]
+
+        # Apply the fitted functions to each channel
+        red_output = 0.93*red_channel + 5000
+        green_output = green_channel - 2000
+        blue_output = blue_channel - 4500
+
+        red_output_clipped = np.clip(red_output, 0, 65535)
+        green_output_clipped = np.clip(green_output, 0, 65535)
+        blue_output_clipped = np.clip(blue_output, 0, 65535)
+
+        colored = np.stack((red_output_clipped, green_output_clipped, blue_output_clipped), axis=-1)
+        colored = np.float32(colored)
+        colored = colored/256
+        #print("pop")
+
     if spectrum == "rawpop":
         resized = resized*256
 
