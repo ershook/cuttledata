@@ -10,11 +10,11 @@ from PIL import Image
 from pathlib import Path
 
 
-def process_files(file_paths, file_dict1, list_of_images, save_images, make_movie, downsampling_factor):
+def process_files(file_paths, input_dir, file_dict1, list_of_images, save_images, make_movie, downsampling_factor):
     if len(file_paths) > 0:
         results = []
         for file_path in file_paths:
-            result = generate_files(file_path, file_dict1, list_of_images, save_images, make_movie, downsampling_factor)
+            result = generate_files(file_path, input_dir, file_dict1, list_of_images, save_images, make_movie, downsampling_factor)
             if result is not None:
                 results.append(result)
             else:
@@ -24,11 +24,10 @@ def process_files(file_paths, file_dict1, list_of_images, save_images, make_movi
         print("no files in batch")
 
 
-def generate_files(image_source, file_dict3, list_of_images, save_images, make_movie, downsampling_factor):
-    print("reading image file " + str(image_source))
+def generate_files(image_source, input_dir, file_dict3, list_of_images, save_images, make_movie, downsampling_factor):
+    print("input_dir: " + str(input_dir))
     filename, extension = os.path.splitext(image_source)
     filetype = extension.lower()
-    
     try:
         if filetype in [".dng", ".arw", ".tif", ".tiff"]:
             rgb = None  # Initialize rgb to None for scope reasons
@@ -37,26 +36,25 @@ def generate_files(image_source, file_dict3, list_of_images, save_images, make_m
                 with rawpy.imread(image_source) as raw:
                     rgb = raw.postprocess(gamma=(50, 50), no_auto_bright=True, output_bps=8)
             elif filetype in [".tif", ".tiff"]:
-                #print("TIF found")
                 rgb = np.array(Image.open(image_source))
 
             if rgb is not None:
-                
+                #print("RGB IS NOT NONE")
                 #if the image is taller than it is wide, rotate by 90 degrees
                 height, width, _ = rgb.shape
                 if height > width:
                     rgb = np.rot90(rgb)
-
                 # then look at what images we need to make. For each list of parameters . . .
                 filename = os.path.basename(image_source)
                 file_number = file_dict3.get(filename)
 
                 #make every output that you need with this one file
                 for i in range(len(list_of_images)):
-
+                    #print("working on image")
                     #save the outputs in a folder with the corresponding name for the image (scaling factor, color grading, color vs black and white, cropped), up two levels from where the DNG image was found
-                    output_path = (((os.path.dirname(os.path.dirname(os.path.dirname(image_source)))))) + "/" + str(list_of_images[i][0]).replace('.', '_') + "_" + list_of_images[i][
-                            1] + "_" + list_of_images[i][2] + "_" + str(list_of_images[i][3]) + "_" + str(downsampling_factor) + "/tifs/" + str(file_number).zfill(6) + ".tif"
+                    output_path = (((os.path.dirname(os.path.dirname((input_dir)))))) + "/" + str(list_of_images[i][0]).replace('.', '_') + "_" + list_of_images[i][
+                            1] + "_" + list_of_images[i][2] + "_" + str(list_of_images[i][3])  + "_" + str(list_of_images[i][4]) + "_" + str(downsampling_factor) + "/tifs/" + str(file_number).zfill(6) + ".tif"
+                    #print("OUTPUT PATH" + str(output_path))
                     # apply the downsampling
                     resized_image = resize(rgb, list_of_images[i][0])
                     # apply the color correction, which involves the color crading and the color-> black and white conversion
@@ -64,14 +62,18 @@ def generate_files(image_source, file_dict3, list_of_images, save_images, make_m
                     # crop the image
                     cropped = crop_image(processed, list_of_images[i][3])
                     # save the image in the corresponding directory
-
+                    if list_of_images[i][4] == "flip":
+                        cropped = np.rot90(cropped)
+                        cropped = np.rot90(cropped)
                     if save_images:
+                        print(output_path)
                         tifffile.imwrite(output_path, cropped.astype('uint8'))
 
                     if make_movie:
                         frame = Image.fromarray(rgb)
 
                 #return the last image in the list of images to use to make the video
+                #print("about to return cropped")
                 return cropped.astype('uint8')
             else:
                 print(f"Unsupported file format for file: {image_source}")
